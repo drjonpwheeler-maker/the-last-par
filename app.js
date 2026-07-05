@@ -1,8 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // THE LAST PAR — App Logic
+// Storage keys:
+//   lastpar_round   → current round state
+//   lastpar_courses → array of saved courses
 // ═══════════════════════════════════════════════════════════════════════════
 
-const STORAGE_KEY = 'lastpar_round';
+const ROUND_KEY   = 'lastpar_round';
+const COURSES_KEY = 'lastpar_courses';
 const AVATAR_COLORS = ['#4caf6e','#c9a84c','#5b9bd5','#e07b5b','#a06bca','#5bb8b4','#d45b8e','#8bc34a'];
 
 // ── State ─────────────────────────────────────────────────────────────────
@@ -10,11 +14,30 @@ let state = {
   screen: 'welcome',
   courseName: '',
   pars: Array(18).fill(4),
-  hcpRatings: Array(18).fill(0).map((_,i) => i+1), // default 1-18
-  players: [],       // {name, hcp}
-  scores: {},        // { playerIdx: [gross1..gross18] }  null = not entered
-  tieWinner: null,   // player index if manually chosen
+  hcpRatings: Array(18).fill(0).map((_,i) => i+1),
+  players: [],
+  scores: {},
+  tieWinner: null,
 };
+
+// ── Course Storage ────────────────────────────────────────────────────────
+function loadCourses() {
+  try { return JSON.parse(localStorage.getItem(COURSES_KEY)) || []; } catch { return []; }
+}
+function saveCourses(courses) {
+  localStorage.setItem(COURSES_KEY, JSON.stringify(courses));
+}
+function saveCourse(name, pars, hcpRatings) {
+  const courses = loadCourses();
+  const existing = courses.findIndex(c => c.name.toLowerCase() === name.toLowerCase());
+  const course = { id: Date.now(), name, savedAt: new Date().toLocaleDateString(), pars, hcpRatings };
+  if (existing >= 0) courses[existing] = course;
+  else courses.unshift(course);
+  saveCourses(courses);
+}
+function deleteCourse(id) {
+  saveCourses(loadCourses().filter(c => c.id !== id));
+}
 
 // ── Handicap Logic ────────────────────────────────────────────────────────
 function strokesOnHole(playerHcp, holeHcpRating) {
@@ -22,12 +45,9 @@ function strokesOnHole(playerHcp, holeHcpRating) {
   const extra = (playerHcp % 18) >= holeHcpRating ? 1 : 0;
   return base + extra;
 }
-
 function netScore(gross, playerHcp, holeHcpRating) {
   return gross - strokesOnHole(playerHcp, holeHcpRating);
 }
-
-// Returns 'par','birdie','eagle','double','bogey', or null
 function netCategory(gross, par, playerHcp, holeHcpRating) {
   if (gross === null || gross === undefined || gross === '') return null;
   const net = netScore(Number(gross), playerHcp, holeHcpRating);
@@ -38,13 +58,9 @@ function netCategory(gross, par, playerHcp, holeHcpRating) {
   if (diff === 0)  return 'par';
   return 'bogey';
 }
-
-// Dollar contribution of a single qualifying score
 function scoreDollars(cat) {
   return { double: 4, eagle: 3, birdie: 2, par: 1 }[cat] || 0;
 }
-
-// Total pot for one hole: sum(scoreDollars per qualifying player) × playerCount
 function holePot(holeIdx) {
   const n = state.players.length;
   if (n === 0) return 0;
@@ -57,14 +73,11 @@ function holePot(holeIdx) {
   }
   return qualSum * n;
 }
-
 function totalPot() {
   let total = 0;
   for (let h = 0; h < 18; h++) total += holePot(h);
   return total;
 }
-
-// Best category on a hole (highest-value qualifying net score)
 function holeBestCategory(holeIdx) {
   const cats = ['double','eagle','birdie','par'];
   const n = state.players.length;
@@ -72,15 +85,11 @@ function holeBestCategory(holeIdx) {
     for (let pi = 0; pi < n; pi++) {
       const gross = (state.scores[pi] || [])[holeIdx];
       if (gross === null || gross === undefined || gross === '') continue;
-      if (netCategory(gross, state.pars[holeIdx], state.players[pi].hcp, state.hcpRatings[holeIdx]) === cat) {
-        return cat;
-      }
+      if (netCategory(gross, state.pars[holeIdx], state.players[pi].hcp, state.hcpRatings[holeIdx]) === cat) return cat;
     }
   }
   return null;
 }
-
-// Players who made the best category on a hole
 function holeBestPlayers(holeIdx) {
   const best = holeBestCategory(holeIdx);
   if (!best) return [];
@@ -89,45 +98,38 @@ function holeBestPlayers(holeIdx) {
   for (let pi = 0; pi < n; pi++) {
     const gross = (state.scores[pi] || [])[holeIdx];
     if (gross === null || gross === undefined || gross === '') continue;
-    if (netCategory(gross, state.pars[holeIdx], state.players[pi].hcp, state.hcpRatings[holeIdx]) === best) {
-      result.push(pi);
-    }
+    if (netCategory(gross, state.pars[holeIdx], state.players[pi].hcp, state.hcpRatings[holeIdx]) === best) result.push(pi);
   }
   return result;
 }
-
-// Find the last qualifying hole (18→1)
 function lastQualifyingHole() {
   for (let h = 17; h >= 0; h--) {
     if (holeBestCategory(h) !== null) return h;
   }
   return null;
 }
-
 function winnerInfo() {
   const lqh = lastQualifyingHole();
   if (lqh === null) return null;
   const players = holeBestPlayers(lqh);
   const cat = holeBestCategory(lqh);
   const isTie = players.length > 1;
-  const winner = isTie
-    ? (state.tieWinner !== null ? state.tieWinner : null)
-    : players[0];
+  const winner = isTie ? (state.tieWinner !== null ? state.tieWinner : null) : players[0];
   return { holeIdx: lqh, cat, tiedPlayers: players, isTie, winner };
 }
 
-// ── Persistence ───────────────────────────────────────────────────────────
+// ── Round Persistence ─────────────────────────────────────────────────────
 function saveState() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+  try { localStorage.setItem(ROUND_KEY, JSON.stringify(state)); } catch(e) {}
 }
 function loadState() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(ROUND_KEY);
     if (raw) state = { ...state, ...JSON.parse(raw) };
   } catch(e) {}
 }
 function clearState() {
-  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(ROUND_KEY);
   state = {
     screen: 'welcome',
     courseName: '',
@@ -143,10 +145,7 @@ function clearState() {
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const el = document.getElementById(`screen-${id}`);
-  if (el) {
-    el.classList.add('active');
-    el.scrollTop = 0;
-  }
+  if (el) { el.classList.add('active'); el.scrollTop = 0; }
   state.screen = id;
   saveState();
 }
@@ -163,9 +162,9 @@ function toast(msg) {
 
 // ── Welcome screen ────────────────────────────────────────────────────────
 function renderWelcome() {
-  const hasSaved = !!localStorage.getItem(STORAGE_KEY);
+  const hasSaved = state.players.length > 0;
   const resumeBtn = document.getElementById('btn-resume');
-  if (hasSaved && state.players.length > 0) {
+  if (hasSaved) {
     resumeBtn.style.display = 'flex';
     document.getElementById('resume-info').textContent =
       `${state.courseName || 'Saved round'} · ${state.players.length} players`;
@@ -175,47 +174,157 @@ function renderWelcome() {
 }
 
 // ── Course setup ──────────────────────────────────────────────────────────
-function renderCourseSetup() {
-  document.getElementById('course-name-input').value = state.courseName;
-  const grid = document.getElementById('course-holes-grid');
-  grid.innerHTML = '';
+function readCourseInputsIntoState() {
+  const nameEl = document.getElementById('course-name-input');
+  if (nameEl) state.courseName = nameEl.value.trim();
+  for (let h = 0; h < 18; h++) {
+    const pEl = document.getElementById(`par-input-${h}`);
+    const hEl = document.getElementById(`hcp-input-${h}`);
+    if (pEl) state.pars[h] = Math.min(6, Math.max(3, parseInt(pEl.value) || 4));
+    if (hEl) state.hcpRatings[h] = Math.min(18, Math.max(1, parseInt(hEl.value) || h+1));
+  }
+  saveState();
+}
 
-  // Header
-  grid.insertAdjacentHTML('beforeend', `
+function renderCourseSetup() {
+  const nameEl = document.getElementById('course-name-input');
+  if (nameEl) nameEl.value = state.courseName;
+
+  const grid = document.getElementById('course-holes-grid');
+  // Detach old listener by cloning
+  const newGrid = grid.cloneNode(false);
+  grid.parentNode.replaceChild(newGrid, grid);
+
+  newGrid.insertAdjacentHTML('beforeend', `
     <div class="course-grid-header">
       <div>Hole</div><div>Par</div><div>HCP Rating</div>
     </div>
   `);
 
   for (let h = 0; h < 18; h++) {
-    if (h === 0) grid.insertAdjacentHTML('beforeend', `<div class="nine-label">Front Nine</div>`);
-    if (h === 9) grid.insertAdjacentHTML('beforeend', `<div class="nine-label">Back Nine</div>`);
-
-    grid.insertAdjacentHTML('beforeend', `
-      <div class="course-row" id="course-row-${h}">
+    if (h === 0) newGrid.insertAdjacentHTML('beforeend', `<div class="nine-label">Front Nine</div>`);
+    if (h === 9) newGrid.insertAdjacentHTML('beforeend', `<div class="nine-label">Back Nine</div>`);
+    newGrid.insertAdjacentHTML('beforeend', `
+      <div class="course-row">
         <div class="hole-num">${h+1}</div>
         <input type="number" min="3" max="6" value="${state.pars[h]}"
-               data-hole="${h}" data-field="par"
-               inputmode="numeric" id="par-input-${h}">
+               data-hole="${h}" data-field="par" inputmode="numeric" id="par-input-${h}">
         <input type="number" min="1" max="18" value="${state.hcpRatings[h]}"
-               data-hole="${h}" data-field="hcp"
-               inputmode="numeric" id="hcp-input-${h}">
+               data-hole="${h}" data-field="hcp" inputmode="numeric" id="hcp-input-${h}">
       </div>
     `);
   }
 
-  grid.addEventListener('change', e => {
+  newGrid.addEventListener('change', e => {
     const inp = e.target;
     const h = parseInt(inp.dataset.hole);
-    const v = parseInt(inp.value);
+    if (!inp.dataset.field) return;
     if (inp.dataset.field === 'par') {
-      state.pars[h] = isNaN(v) ? 4 : Math.min(6, Math.max(3, v));
+      state.pars[h] = Math.min(6, Math.max(3, parseInt(inp.value) || 4));
       inp.value = state.pars[h];
     } else {
-      state.hcpRatings[h] = isNaN(v) ? h+1 : Math.min(18, Math.max(1, v));
+      state.hcpRatings[h] = Math.min(18, Math.max(1, parseInt(inp.value) || h+1));
       inp.value = state.hcpRatings[h];
     }
     saveState();
+  });
+}
+
+// ── Course list screen ────────────────────────────────────────────────────
+function renderCourseList() {
+  const courses = loadCourses();
+  const container = document.getElementById('course-list-container');
+  container.innerHTML = '';
+
+  if (courses.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div style="font-size:40px;margin-bottom:12px">🏌️</div>
+        <div style="font-size:16px;font-weight:600;color:var(--cream);margin-bottom:6px">No saved courses yet</div>
+        <div class="text-muted">Set up a course and tap Save to store it here</div>
+      </div>`;
+    return;
+  }
+
+  courses.forEach(course => {
+    const parTotF = course.pars.reduce((a,b) => a+b, 0);
+    const card = document.createElement('div');
+    card.className = 'saved-course-card';
+    card.innerHTML = `
+      <div class="saved-course-header" data-id="${course.id}">
+        <div class="saved-course-info">
+          <div class="saved-course-name">${escHtml(course.name)}</div>
+          <div class="saved-course-meta">Par ${parTotF} · Saved ${course.savedAt}</div>
+        </div>
+        <span class="saved-course-chevron">▼</span>
+      </div>
+      <div class="saved-course-body" id="course-body-${course.id}" style="display:none">
+        <div class="mini-course-grid">
+          <div class="mini-grid-hdr">Hole</div>
+          <div class="mini-grid-hdr">Par</div>
+          <div class="mini-grid-hdr">HCP</div>
+          ${course.pars.map((p,i) => `
+            <div class="mini-grid-cell num">${i+1}</div>
+            <div class="mini-grid-cell">${p}</div>
+            <div class="mini-grid-cell">${course.hcpRatings[i]}</div>
+          `).join('')}
+        </div>
+        <div class="saved-course-actions">
+          <button class="btn btn-primary btn-sm load-course-btn" data-id="${course.id}">Load Course</button>
+          <button class="btn btn-danger btn-sm delete-course-btn" data-id="${course.id}">Delete</button>
+        </div>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+
+  // Toggle expand
+  container.querySelectorAll('.saved-course-header').forEach(hdr => {
+    hdr.addEventListener('click', () => {
+      const id = hdr.dataset.id;
+      const body = document.getElementById(`course-body-${id}`);
+      const chevron = hdr.querySelector('.saved-course-chevron');
+      const isOpen = body.style.display !== 'none';
+      // close all
+      container.querySelectorAll('.saved-course-body').forEach(b => b.style.display = 'none');
+      container.querySelectorAll('.saved-course-chevron').forEach(c => c.style.transform = '');
+      if (!isOpen) {
+        body.style.display = 'block';
+        chevron.style.transform = 'rotate(180deg)';
+      }
+    });
+  });
+
+  // Load
+  container.querySelectorAll('.load-course-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.id);
+      const course = loadCourses().find(c => c.id === id);
+      if (!course) return;
+      state.courseName = course.name;
+      state.pars = [...course.pars];
+      state.hcpRatings = [...course.hcpRatings];
+      saveState();
+      renderCourseSetup();
+      showScreen('course');
+      toast(`✅ Loaded: ${course.name}`);
+    });
+  });
+
+  // Delete
+  container.querySelectorAll('.delete-course-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.id);
+      const course = loadCourses().find(c => c.id === id);
+      if (!course) return;
+      if (confirm(`Delete "${course.name}"?`)) {
+        deleteCourse(id);
+        renderCourseList();
+        toast('Course deleted');
+      }
+    });
   });
 }
 
@@ -223,34 +332,29 @@ function renderCourseSetup() {
 function renderPlayersSetup() {
   const list = document.getElementById('player-list');
   list.innerHTML = '';
-
   state.players.forEach((p, i) => {
     const initials = p.name ? p.name.trim().split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase() : (i+1).toString();
     list.insertAdjacentHTML('beforeend', `
       <div class="player-card" id="player-card-${i}">
         <div class="player-avatar av-${i % 8}">${initials}</div>
         <div class="player-fields">
-          <input type="text" placeholder="Player name" value="${p.name}"
+          <input type="text" placeholder="Player name" value="${escHtml(p.name)}"
                  data-player="${i}" data-field="name" maxlength="20">
-          <input type="number" placeholder="HCP" value="${p.hcp === 0 ? '' : p.hcp}"
-                 min="0" max="54" data-player="${i}" data-field="hcp"
-                 inputmode="numeric">
+          <input type="number" placeholder="HCP" value="${p.hcp === 0 && p.name === '' ? '' : p.hcp}"
+                 min="0" max="54" data-player="${i}" data-field="hcp" inputmode="numeric">
         </div>
         <button class="player-remove" data-player="${i}" title="Remove">✕</button>
       </div>
     `);
   });
 
-  const addBtn = document.getElementById('add-player-btn');
-  addBtn.style.display = state.players.length < 8 ? 'flex' : 'none';
+  document.getElementById('add-player-btn').style.display = state.players.length < 8 ? 'flex' : 'none';
 
   list.querySelectorAll('input').forEach(inp => {
     inp.addEventListener('input', e => {
       const i = parseInt(e.target.dataset.player);
-      const field = e.target.dataset.field;
-      if (field === 'name') {
+      if (e.target.dataset.field === 'name') {
         state.players[i].name = e.target.value;
-        // Update avatar initials
         const initials = e.target.value.trim().split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase() || (i+1).toString();
         const avatar = document.querySelector(`#player-card-${i} .player-avatar`);
         if (avatar) avatar.textContent = initials;
@@ -265,7 +369,6 @@ function renderPlayersSetup() {
     btn.addEventListener('click', e => {
       const i = parseInt(e.target.dataset.player);
       state.players.splice(i, 1);
-      // Re-index scores
       const newScores = {};
       Object.keys(state.scores).forEach(k => {
         const ki = parseInt(k);
@@ -284,11 +387,9 @@ const CAT_LABELS = { double:'Double Eagle 🦅🦅', eagle:'Eagle 🦅', birdie:
 const CAT_SHORT  = { double:'2-Eagle', eagle:'Eagle', birdie:'Birdie', par:'Par' };
 
 function renderScorecard() {
-  // Pot total
   document.getElementById('pot-total').textContent = `$${totalPot()}`;
   document.getElementById('sc-course-name').textContent = state.courseName || 'Round';
 
-  // Last par banner
   const wi = winnerInfo();
   const banner = document.getElementById('last-par-banner');
   if (wi) {
@@ -296,17 +397,14 @@ function renderScorecard() {
     const name = wi.winner !== null
       ? state.players[wi.winner].name
       : (wi.isTie ? wi.tiedPlayers.map(i=>state.players[i].name).join(' / ') + ' (TIE)' : state.players[wi.tiedPlayers[0]]?.name);
-    document.getElementById('lp-current-leader').textContent =
-      `Hole ${wi.holeIdx+1} — ${CAT_SHORT[wi.cat]} — ${name}`;
+    document.getElementById('lp-current-leader').textContent = `Hole ${wi.holeIdx+1} — ${CAT_SHORT[wi.cat]} — ${name}`;
   } else {
     banner.style.display = 'none';
   }
 
-  // Hole cards
   const container = document.getElementById('hole-cards');
   const expanded = new Set();
   container.querySelectorAll('.hole-card.expanded').forEach(c => expanded.add(parseInt(c.dataset.hole)));
-
   container.innerHTML = '';
 
   for (let h = 0; h < 18; h++) {
@@ -322,26 +420,21 @@ function renderScorecard() {
     if (isExpanded) cardClass += ' expanded';
     if (isLast) cardClass += ' current-hole';
 
-    let potBadge = pot > 0 ? `<span class="hole-pot-badge">$${pot}</span>` : '';
-    let qualBadge = bestCat ? `<span style="font-size:13px;color:var(--green-accent)">${CAT_LABELS[bestCat]}</span>` : '';
-
-    // Build player score rows
     let scoreRows = `
       <div class="score-row">
         <div class="score-row-header">Player</div>
         <div class="score-row-header" style="text-align:center">Gross</div>
         <div class="score-row-header" style="text-align:center">Net</div>
         <div class="score-row-header" style="text-align:center">Result</div>
-      </div>
-    `;
+      </div>`;
 
     for (let pi = 0; pi < state.players.length; pi++) {
       const p = state.players[pi];
       const gross = (state.scores[pi] || [])[h];
       const strokes = strokesOnHole(p.hcp, hcpR);
-      const cat = gross !== null && gross !== undefined && gross !== ''
+      const cat = (gross !== null && gross !== undefined && gross !== '')
         ? netCategory(gross, par, p.hcp, hcpR) : null;
-      const net = gross !== null && gross !== undefined && gross !== ''
+      const net = (gross !== null && gross !== undefined && gross !== '')
         ? netScore(Number(gross), p.hcp, hcpR) : null;
 
       let catClass = 'net-score-badge';
@@ -353,7 +446,6 @@ function renderScorecard() {
       if (cat === 'bogey')  { catClass += ' net-bogey';  catText = '+' + (net - par); }
 
       const strokesHint = strokes > 0 ? `<div class="strokes-given">${strokes} stroke${strokes>1?'s':''}</div>` : '';
-
       scoreRows += `
         <div class="score-row">
           <div class="player-score-name">
@@ -363,8 +455,7 @@ function renderScorecard() {
           <div class="score-input-wrap">
             <input type="number" min="1" max="15"
                    value="${gross !== null && gross !== undefined && gross !== '' ? gross : ''}"
-                   placeholder="${par}"
-                   inputmode="numeric"
+                   placeholder="${par}" inputmode="numeric"
                    data-hole="${h}" data-player="${pi}">
             ${strokesHint}
           </div>
@@ -372,11 +463,9 @@ function renderScorecard() {
             ${net !== null ? net : '—'}
           </div>
           <div class="${catClass}">${cat ? catText : '—'}</div>
-        </div>
-      `;
+        </div>`;
     }
 
-    // Summary row
     let summaryRow = '';
     if (pot > 0) {
       const qualNames = holeBestPlayers(h).map(i => state.players[i]?.name || `P${i+1}`).join(', ');
@@ -384,8 +473,7 @@ function renderScorecard() {
         <div class="hole-summary-row">
           <span class="hole-qualifier-info">${qualNames}</span>
           <span class="hole-pot-info">+$${pot} to pot</span>
-        </div>
-      `;
+        </div>`;
     }
 
     container.insertAdjacentHTML('beforeend', `
@@ -399,25 +487,17 @@ function renderScorecard() {
             </div>
           </div>
           <div class="hole-header-right">
-            ${qualBadge}
-            ${potBadge}
+            ${bestCat ? `<span style="font-size:13px;color:var(--green-accent)">${CAT_LABELS[bestCat]}</span>` : ''}
+            ${pot > 0 ? `<span class="hole-pot-badge">$${pot}</span>` : ''}
             <span class="hole-chevron">▼</span>
           </div>
         </div>
-        <div class="hole-body">
-          ${scoreRows}
-          ${summaryRow}
-        </div>
-      </div>
-    `);
+        <div class="hole-body">${scoreRows}${summaryRow}</div>
+      </div>`);
   }
 
-  // Attach events
   container.querySelectorAll('.hole-header').forEach(hdr => {
-    hdr.addEventListener('click', () => {
-      const card = hdr.closest('.hole-card');
-      card.classList.toggle('expanded');
-    });
+    hdr.addEventListener('click', () => hdr.closest('.hole-card').classList.toggle('expanded'));
   });
 
   container.querySelectorAll('input[data-hole]').forEach(inp => {
@@ -430,11 +510,9 @@ function renderScorecard() {
       state.tieWinner = null;
       saveState();
       renderScorecard();
-      // Re-expand this hole card
       const card = document.getElementById(`hole-card-${h}`);
       if (card) card.classList.add('expanded');
     });
-    // Prevent form-level collapse on input focus
     inp.addEventListener('click', e => e.stopPropagation());
   });
 }
@@ -455,11 +533,7 @@ function renderWinner() {
   const wi = winnerInfo();
   const pot = totalPot();
 
-  if (!wi || wi.winner === null) {
-    // Need tiebreak or no scores
-    renderTiebreaker(wi, pot);
-    return;
-  }
+  if (!wi || wi.winner === null) { renderTiebreaker(wi, pot); return; }
 
   const winner = state.players[wi.winner];
   document.getElementById('winner-content').innerHTML = `
@@ -469,31 +543,16 @@ function renderWinner() {
       <div class="winner-sub">wins The Last Par</div>
       <div class="winner-amount">$${pot}</div>
     </div>
-
     <div class="winner-details">
-      <div class="winner-detail-row">
-        <span class="wd-label">Winning hole</span>
-        <span class="wd-value gold">Hole ${wi.holeIdx+1}</span>
-      </div>
-      <div class="winner-detail-row">
-        <span class="wd-label">Winning score</span>
-        <span class="wd-value">${CAT_LABELS[wi.cat]}</span>
-      </div>
-      <div class="winner-detail-row">
-        <span class="wd-label">Winning handicap</span>
-        <span class="wd-value">${winner.hcp}</span>
-      </div>
-      <div class="winner-detail-row">
-        <span class="wd-label">Total pot</span>
-        <span class="wd-value gold">$${pot}</span>
-      </div>
+      <div class="winner-detail-row"><span class="wd-label">Winning hole</span><span class="wd-value gold">Hole ${wi.holeIdx+1}</span></div>
+      <div class="winner-detail-row"><span class="wd-label">Winning score</span><span class="wd-value">${CAT_LABELS[wi.cat]}</span></div>
+      <div class="winner-detail-row"><span class="wd-label">Player handicap</span><span class="wd-value">${winner.hcp}</span></div>
+      <div class="winner-detail-row"><span class="wd-label">Total pot</span><span class="wd-value gold">$${pot}</span></div>
     </div>
-
     <div class="btn-row">
-      <button class="btn btn-ghost" onclick="showScreen('scorecard')">← Back to scores</button>
+      <button class="btn btn-ghost" onclick="showScreen('scorecard');renderScorecard()">← Back to scores</button>
       <button class="btn btn-danger btn-sm" onclick="confirmNewRound()">New Round</button>
-    </div>
-  `;
+    </div>`;
 }
 
 function renderTiebreaker(wi, pot) {
@@ -504,36 +563,25 @@ function renderTiebreaker(wi, pot) {
         <div style="font-family:var(--font-display);font-size:24px;color:var(--gray-muted)">No qualifying scores yet</div>
         <div class="text-muted mt-8">Enter scores on the scorecard</div>
       </div>
-      <button class="btn btn-ghost mt-16" onclick="showScreen('scorecard')">← Back to scorecard</button>
-    `;
+      <button class="btn btn-ghost mt-16" onclick="showScreen('scorecard');renderScorecard()">← Back to scorecard</button>`;
     return;
   }
-
-  const tiedNames = wi.tiedPlayers.map(i => state.players[i]);
   const tieButtons = wi.tiedPlayers.map(i => `
-    <button class="tie-player-btn ${state.tieWinner === i ? 'selected' : ''}"
-            onclick="selectTieWinner(${i})">
+    <button class="tie-player-btn ${state.tieWinner === i ? 'selected' : ''}" onclick="selectTieWinner(${i})">
       ${escHtml(state.players[i].name)}
-    </button>
-  `).join('');
-
+    </button>`).join('');
   document.getElementById('winner-content').innerHTML = `
     <div style="text-align:center;padding:24px 0 16px">
       <div style="font-size:56px;margin-bottom:12px">🤝</div>
       <div style="font-family:var(--font-display);font-size:28px;color:var(--gold)">Tie on Hole ${wi.holeIdx+1}!</div>
       <div class="text-muted mt-8">${CAT_LABELS[wi.cat]} — multiple players</div>
     </div>
-
     <div class="tiebreaker">
       <h3>Who wins the pot?</h3>
       <p>Multiple players made a ${CAT_SHORT[wi.cat]} on hole ${wi.holeIdx+1}. The group picks the winner.</p>
       ${tieButtons}
     </div>
-
-    <div class="btn-row">
-      <button class="btn btn-ghost" onclick="showScreen('scorecard')">← Back</button>
-    </div>
-  `;
+    <div class="btn-row"><button class="btn btn-ghost" onclick="showScreen('scorecard');renderScorecard()">← Back</button></div>`;
 }
 
 function selectTieWinner(playerIdx) {
@@ -543,75 +591,47 @@ function selectTieWinner(playerIdx) {
 }
 
 function confirmNewRound() {
-  if (confirm('Start a new round? This will clear all current scores.')) {
+  if (confirm('Start a new round? This will clear all scores.')) {
     clearState();
     renderWelcome();
     showScreen('welcome');
   }
 }
 
-// ── Validation helpers ────────────────────────────────────────────────────
+// ── Validation ────────────────────────────────────────────────────────────
 function validateCourse() {
-  state.courseName = document.getElementById('course-name-input').value.trim();
-  for (let h = 0; h < 18; h++) {
-    const pv = parseInt(document.getElementById(`par-input-${h}`)?.value);
-    const hv = parseInt(document.getElementById(`hcp-input-${h}`)?.value);
-    state.pars[h] = isNaN(pv) ? 4 : Math.min(6, Math.max(3, pv));
-    state.hcpRatings[h] = isNaN(hv) ? h+1 : Math.min(18, Math.max(1, hv));
-  }
-  // Check HCP ratings 1-18 are unique
-  const ratings = state.hcpRatings.slice().sort((a,b)=>a-b);
-  const unique = new Set(ratings);
-  if (unique.size < 18) {
-    toast('⚠️ HCP ratings should be unique (1–18)');
-  }
-  saveState();
-  return true;
+  readCourseInputsIntoState();
+  const unique = new Set(state.hcpRatings);
+  if (unique.size < 18) toast('⚠️ HCP ratings should each be unique (1–18)');
 }
 
 function validatePlayers() {
-  if (state.players.length < 2) {
-    toast('Add at least 2 players');
-    return false;
-  }
-  const missing = state.players.find(p => !p.name.trim());
-  if (missing) {
-    toast('All players need a name');
-    return false;
-  }
+  if (state.players.length < 2) { toast('Add at least 2 players'); return false; }
+  if (state.players.find(p => !p.name.trim())) { toast('All players need a name'); return false; }
   return true;
 }
 
-// ── Utility ───────────────────────────────────────────────────────────────
 function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ── Icon generation (canvas → PNG) ───────────────────────────────────────
+// ── Icon generation ───────────────────────────────────────────────────────
 function generateIcons() {
   ['192','512'].forEach(size => {
     const sz = parseInt(size);
     const canvas = document.createElement('canvas');
     canvas.width = sz; canvas.height = sz;
     const ctx = canvas.getContext('2d');
-    // Background
     ctx.fillStyle = '#0a1a0e';
     ctx.fillRect(0,0,sz,sz);
-    // Circle
     const cx = sz/2, cy = sz/2, r = sz*0.44;
     const grad = ctx.createRadialGradient(cx,cy*0.8,0,cx,cy,r);
-    grad.addColorStop(0,'#2d6a3f');
-    grad.addColorStop(1,'#122318');
+    grad.addColorStop(0,'#2d6a3f'); grad.addColorStop(1,'#122318');
     ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(cx,cy,r,0,Math.PI*2);
-    ctx.fill();
-    // Flag emoji
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
     ctx.font = `${sz*0.42}px serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('⛳', cx, cy);
-    // Store as data URL in link tag (for iOS home screen)
     const link = document.querySelector(`link[sizes="${size}x${size}"]`);
     if (link) link.href = canvas.toDataURL('image/png');
   });
@@ -621,95 +641,84 @@ function generateIcons() {
 document.addEventListener('DOMContentLoaded', () => {
   loadState();
   generateIcons();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 
-  // Register service worker
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
-  }
+  // ── Single delegated click handler — never fails on null elements ────────
+  document.body.addEventListener('click', e => {
+    const id = e.target.closest('[id]')?.id;
+    if (!id) return;
 
-  // ── Button wiring ────────────────────────────────────────────────────────
-  document.getElementById('btn-new-round').addEventListener('click', () => {
-    clearState();
-    renderCourseSetup();
-    showScreen('course');
-  });
-
-  document.getElementById('btn-resume').addEventListener('click', () => {
-    if (state.screen === 'scorecard' || state.screen === 'winner') {
+    if (id === 'btn-new-round') {
+      clearState();
+      renderCourseSetup();
+      showScreen('course');
+    }
+    else if (id === 'btn-resume') {
+      if (state.screen === 'winner') { renderWinner(); showScreen('winner'); }
+      else { renderScorecard(); showScreen('scorecard'); }
+    }
+    else if (id === 'btn-course-back') {
+      showScreen('welcome');
+    }
+    else if (id === 'btn-save-course') {
+      readCourseInputsIntoState();
+      const name = state.courseName;
+      if (!name) { toast('Enter a course name first'); return; }
+      saveCourse(name, [...state.pars], [...state.hcpRatings]);
+      toast('✅ "' + name + '" saved!');
+    }
+    else if (id === 'btn-open-courses') {
+      readCourseInputsIntoState();
+      renderCourseList();
+      showScreen('courses');
+    }
+    else if (id === 'btn-courses-back') {
+      renderCourseSetup();
+      showScreen('course');
+    }
+    else if (id === 'btn-course-next') {
+      readCourseInputsIntoState();
+      const unique = new Set(state.hcpRatings);
+      if (unique.size < 18) toast('⚠️ HCP ratings should each be unique (1–18)');
+      if (state.players.length === 0) state.players = [{ name: '', hcp: 0 }, { name: '', hcp: 0 }];
+      renderPlayersSetup();
+      showScreen('players');
+    }
+    else if (id === 'btn-players-back') {
+      renderCourseSetup();
+      showScreen('course');
+    }
+    else if (id === 'btn-players-next') {
+      if (!validatePlayers()) return;
       renderScorecard();
-      showScreen(state.screen);
-    } else {
+      showScreen('scorecard');
+    }
+    else if (id === 'add-player-btn') {
+      if (state.players.length >= 8) { toast('Maximum 8 players'); return; }
+      state.players.push({ name: '', hcp: 0 });
+      renderPlayersSetup();
+      const inputs = document.querySelectorAll('#player-list input[data-field="name"]');
+      if (inputs.length) inputs[inputs.length-1].focus();
+    }
+    else if (id === 'btn-sc-back') {
+      renderPlayersSetup();
+      showScreen('players');
+    }
+    else if (id === 'btn-see-winner') {
+      renderWinner();
+      showScreen('winner');
+    }
+    else if (id === 'btn-winner-back') {
       renderScorecard();
       showScreen('scorecard');
     }
   });
 
-  // Course → Players
-  document.getElementById('btn-course-next').addEventListener('click', () => {
-    validateCourse();
-    if (state.players.length === 0) {
-      state.players = [{ name: '', hcp: 0 }, { name: '', hcp: 0 }];
-    }
-    renderPlayersSetup();
-    showScreen('players');
-  });
-
-  document.getElementById('btn-course-back').addEventListener('click', () => showScreen('welcome'));
-
-  // Players → Scorecard
-  document.getElementById('btn-players-next').addEventListener('click', () => {
-    if (!validatePlayers()) return;
-    renderScorecard();
-    showScreen('scorecard');
-  });
-
-  document.getElementById('btn-players-back').addEventListener('click', () => {
-    renderCourseSetup();
-    showScreen('course');
-  });
-
-  // Add player
-  document.getElementById('add-player-btn').addEventListener('click', () => {
-    if (state.players.length >= 8) { toast('Maximum 8 players'); return; }
-    state.players.push({ name: '', hcp: 0 });
-    renderPlayersSetup();
-    // Focus new name input
-    const inputs = document.querySelectorAll('#player-list input[data-field="name"]');
-    if (inputs.length) inputs[inputs.length-1].focus();
-  });
-
-  // Scorecard nav
-  document.getElementById('btn-sc-back').addEventListener('click', () => {
-    renderPlayersSetup();
-    showScreen('players');
-  });
-
-  document.getElementById('btn-see-winner').addEventListener('click', () => {
-    renderWinner();
-    showScreen('winner');
-  });
-
-  document.getElementById('btn-winner-back').addEventListener('click', () => {
-    renderScorecard();
-    showScreen('scorecard');
-  });
-
-  // ── Restore screen ───────────────────────────────────────────────────────
+  // ── Restore screen on reopen ─────────────────────────────────────────────
   const sc = state.screen;
-  if (sc === 'scorecard' && state.players.length > 0) {
-    renderScorecard();
-    showScreen('scorecard');
-  } else if (sc === 'winner' && state.players.length > 0) {
-    renderWinner();
-    showScreen('winner');
-  } else if (sc === 'course') {
-    renderCourseSetup();
-    showScreen('course');
-  } else if (sc === 'players' && state.players.length > 0) {
-    renderPlayersSetup();
-    showScreen('players');
-  } else {
-    renderWelcome();
-    showScreen('welcome');
-  }
+  if (sc === 'scorecard' && state.players.length > 0) { renderScorecard(); showScreen('scorecard'); }
+  else if (sc === 'winner' && state.players.length > 0) { renderWinner(); showScreen('winner'); }
+  else if (sc === 'course') { renderCourseSetup(); showScreen('course'); }
+  else if (sc === 'players' && state.players.length > 0) { renderPlayersSetup(); showScreen('players'); }
+  else { renderWelcome(); showScreen('welcome'); }
 });
