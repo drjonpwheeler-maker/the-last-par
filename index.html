@@ -9,9 +9,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Last Par">
-
   <title>The Last Par</title>
-
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png">
   <link rel="apple-touch-icon" sizes="512x512" href="icon-512.png">
@@ -20,7 +18,7 @@
 <body>
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- WELCOME SCREEN                                                        -->
+<!-- WELCOME                                                               -->
 <!-- ══════════════════════════════════════════════════════════════════════ -->
 <div class="screen" id="screen-welcome">
   <div class="welcome-flag">⛳</div>
@@ -51,12 +49,8 @@
     </div>
   </div>
 
-  <button class="btn btn-primary" id="btn-new-round">
-    ＋ Start New Round
-  </button>
-
+  <button class="btn btn-primary" id="btn-new-round">＋ Start New Round</button>
   <div style="height:12px"></div>
-
   <button class="btn btn-ghost" id="btn-resume" style="display:none">
     ▶ Resume Round
     <span id="resume-info" style="font-size:13px;opacity:0.7;margin-left:4px"></span>
@@ -64,29 +58,37 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- COURSE SETUP SCREEN                                                   -->
+<!-- COURSE SETUP                                                          -->
 <!-- ══════════════════════════════════════════════════════════════════════ -->
 <div class="screen" id="screen-course">
   <div class="screen-header">
     <button class="back-btn" id="btn-course-back">←</button>
-    <div>
+    <div style="flex:1">
       <div class="screen-step">Step 1 of 3</div>
       <div class="screen-title">Course Setup</div>
     </div>
+    <!-- Saved courses button -->
+    <button class="courses-list-btn" id="btn-open-courses" title="Saved Courses">
+      🏌️ My Courses
+    </button>
   </div>
 
   <div class="scroll-content">
     <div class="form-group">
-      <label class="form-label">Course Name (optional)</label>
+      <label class="form-label">Course Name</label>
       <input type="text" id="course-name-input" placeholder="e.g. Champions Golf Club" maxlength="40">
     </div>
 
-    <div class="section-label">Hole Pars & HCP Ratings</div>
-    <p class="text-muted mb-16">HCP Rating = difficulty rank (1 = hardest, 18 = easiest). Used to assign handicap strokes.</p>
-
-    <div class="course-grid" id="course-holes-grid">
-      <!-- Dynamically populated -->
+    <!-- Save course row -->
+    <div class="save-course-row">
+      <span class="text-muted" style="font-size:13px">Save this course for future rounds</span>
+      <button class="btn btn-ghost btn-sm" id="btn-save-course">💾 Save</button>
     </div>
+
+    <div class="section-label" style="margin-top:16px">Hole Pars & HCP Ratings</div>
+    <p class="text-muted mb-16">HCP Rating: 1 = hardest hole, 18 = easiest. Used to assign handicap strokes.</p>
+
+    <div class="course-grid" id="course-holes-grid"></div>
   </div>
 
   <div class="sticky-bottom">
@@ -95,7 +97,25 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- PLAYERS SETUP SCREEN                                                  -->
+<!-- SAVED COURSES LIST                                                    -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div class="screen" id="screen-courses">
+  <div class="screen-header">
+    <button class="back-btn" id="btn-courses-back">←</button>
+    <div>
+      <div class="screen-step">Course Library</div>
+      <div class="screen-title">Saved Courses</div>
+    </div>
+  </div>
+
+  <div class="scroll-content">
+    <p class="text-muted mb-16">Tap a course to preview, then load it to fill in all 18 holes automatically.</p>
+    <div id="course-list-container"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- PLAYERS SETUP                                                         -->
 <!-- ══════════════════════════════════════════════════════════════════════ -->
 <div class="screen" id="screen-players">
   <div class="screen-header">
@@ -107,23 +127,16 @@
   </div>
 
   <div class="scroll-content">
-    <p class="text-muted mb-16">Enter each player's name and their course handicap index. Net scores are calculated automatically.</p>
-
+    <p class="text-muted mb-16">Enter each player's name and handicap index. Net scores are calculated automatically.</p>
     <div class="section-label">Players (2–8)</div>
-
-    <div class="player-list" id="player-list">
-      <!-- Dynamically populated -->
-    </div>
-
+    <div class="player-list" id="player-list"></div>
     <button class="add-player-btn" id="add-player-btn">
       <span style="font-size:20px">＋</span> Add Player
     </button>
-
     <div style="height:16px"></div>
-
     <div style="background:rgba(91,155,213,0.08);border:1px solid rgba(91,155,213,0.2);border-radius:12px;padding:14px 16px;">
       <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--blue-net);margin-bottom:6px">How Strokes Work</div>
-      <div class="text-muted">A player with a <strong style="color:var(--cream)">10 handicap</strong> gets 1 stroke on the 10 hardest holes (HCP ratings 1–10). A <strong style="color:var(--cream)">20 handicap</strong> gets 2 strokes on the 2 hardest holes and 1 stroke on the rest.</div>
+      <div class="text-muted">A <strong style="color:var(--cream)">10 handicap</strong> gets 1 stroke on the 10 hardest holes (HCP ratings 1–10). A <strong style="color:var(--cream)">20 handicap</strong> gets 2 strokes on the 2 hardest holes and 1 stroke on the rest.</div>
     </div>
   </div>
 
@@ -133,7 +146,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- SCORECARD SCREEN                                                      -->
+<!-- SCORECARD                                                             -->
 <!-- ══════════════════════════════════════════════════════════════════════ -->
 <div class="screen" id="screen-scorecard">
   <div class="screen-header">
@@ -149,9 +162,7 @@
       <div class="round-info-label">Current Pot</div>
       <div class="pot-amount" id="pot-total">$0</div>
     </div>
-    <button class="btn btn-gold btn-sm" id="btn-see-winner" style="width:auto">
-      See Winner →
-    </button>
+    <button class="btn btn-gold btn-sm" id="btn-see-winner" style="width:auto">See Winner →</button>
   </div>
 
   <div class="last-par-banner" id="last-par-banner" style="display:none">
@@ -163,31 +174,22 @@
   </div>
 
   <div class="scroll-content">
-    <div class="hole-cards" id="hole-cards">
-      <!-- Dynamically populated -->
-    </div>
+    <div class="hole-cards" id="hole-cards"></div>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- WINNER SCREEN                                                         -->
+<!-- WINNER                                                                -->
 <!-- ══════════════════════════════════════════════════════════════════════ -->
 <div class="screen" id="screen-winner">
   <div class="screen-header">
     <button class="back-btn" id="btn-winner-back">←</button>
-    <div>
-      <div class="screen-title">Winner</div>
-    </div>
+    <div><div class="screen-title">Winner</div></div>
   </div>
-
-  <div class="scroll-content" id="winner-content">
-    <!-- Dynamically populated -->
-  </div>
+  <div class="scroll-content" id="winner-content"></div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- TOAST                                                                 -->
-<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- Toast -->
 <div class="toast" id="toast"></div>
 
 <script src="app.js"></script>
